@@ -1,0 +1,1234 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<script src="http://d3js.org/d3.v3.min.js"></script>
+<script src="https://raw.github.com/jasondavies/d3-cloud/master/d3.layout.cloud.js"></script>
+</head>
+<body>
+<script>
+
+  // embed Jason Davies' d3-cloud since it's not available in a CDN
+  // Word cloud layout by Jason Davies, http://www.jasondavies.com/word-cloud/
+// Algorithm due to Jonathan Feinberg, http://static.mrfeinberg.com/bv_ch03.pdf
+(function() {
+
+if (typeof define === "function" && define.amd) define(["d3"], cloud);
+else cloud(this.d3);
+
+function cloud(d3) {
+  d3.layout.cloud = function cloud() {
+    var size = [256, 256],
+        text = cloudText,
+        font = cloudFont,
+        fontSize = cloudFontSize,
+        fontStyle = cloudFontNormal,
+        fontWeight = cloudFontNormal,
+        rotate = cloudRotate,
+        padding = cloudPadding,
+        spiral = archimedeanSpiral,
+        words = [],
+        timeInterval = Infinity,
+        event = d3.dispatch("word", "end"),
+        timer = null,
+        random = Math.random,
+        cloud = {};
+
+    cloud.start = function() {
+      var board = zeroArray((size[0] >> 5) * size[1]),
+          bounds = null,
+          n = words.length,
+          i = -1,
+          tags = [],
+          data = words.map(function(d, i) {
+            d.text = text.call(this, d, i);
+            d.font = font.call(this, d, i);
+            d.style = fontStyle.call(this, d, i);
+            d.weight = fontWeight.call(this, d, i);
+            d.rotate = rotate.call(this, d, i);
+            d.size = ~~fontSize.call(this, d, i);
+            d.padding = padding.call(this, d, i);
+            return d;
+          }).sort(function(a, b) { return b.size - a.size; });
+
+      if (timer) clearInterval(timer);
+      timer = setInterval(step, 0);
+      step();
+
+      return cloud;
+
+      function step() {
+        var start = Date.now();
+        while (Date.now() - start < timeInterval && ++i < n && timer) {
+          var d = data[i];
+          d.x = (size[0] * (random() + .5)) >> 1;
+          d.y = (size[1] * (random() + .5)) >> 1;
+          cloudSprite(d, data, i);
+          if (d.hasText && place(board, d, bounds)) {
+            tags.push(d);
+            event.word(d);
+            if (bounds) cloudBounds(bounds, d);
+            else bounds = [{x: d.x + d.x0, y: d.y + d.y0}, {x: d.x + d.x1, y: d.y + d.y1}];
+            // Temporary hack
+            d.x -= size[0] >> 1;
+            d.y -= size[1] >> 1;
+          }
+        }
+        if (i >= n) {
+          cloud.stop();
+          event.end(tags, bounds);
+        }
+      }
+    }
+
+    cloud.stop = function() {
+      if (timer) {
+        clearInterval(timer);
+        timer = null;
+      }
+      return cloud;
+    };
+
+    function place(board, tag, bounds) {
+      var perimeter = [{x: 0, y: 0}, {x: size[0], y: size[1]}],
+          startX = tag.x,
+          startY = tag.y,
+          maxDelta = Math.sqrt(size[0] * size[0] + size[1] * size[1]),
+          s = spiral(size),
+          dt = random() < .5 ? 1 : -1,
+          t = -dt,
+          dxdy,
+          dx,
+          dy;
+
+      while (dxdy = s(t += dt)) {
+        dx = ~~dxdy[0];
+        dy = ~~dxdy[1];
+
+        if (Math.min(Math.abs(dx), Math.abs(dy)) >= maxDelta) break;
+
+        tag.x = startX + dx;
+        tag.y = startY + dy;
+
+        if (tag.x + tag.x0 < 0 || tag.y + tag.y0 < 0 ||
+            tag.x + tag.x1 > size[0] || tag.y + tag.y1 > size[1]) continue;
+        // TODO only check for collisions within current bounds.
+        if (!bounds || !cloudCollide(tag, board, size[0])) {
+          if (!bounds || collideRects(tag, bounds)) {
+            var sprite = tag.sprite,
+                w = tag.width >> 5,
+                sw = size[0] >> 5,
+                lx = tag.x - (w << 4),
+                sx = lx & 0x7f,
+                msx = 32 - sx,
+                h = tag.y1 - tag.y0,
+                x = (tag.y + tag.y0) * sw + (lx >> 5),
+                last;
+            for (var j = 0; j < h; j++) {
+              last = 0;
+              for (var i = 0; i <= w; i++) {
+                board[x + i] |= (last << msx) | (i < w ? (last = sprite[j * w + i]) >>> sx : 0);
+              }
+              x += sw;
+            }
+            delete tag.sprite;
+            return true;
+          }
+        }
+      }
+      return false;
+    }
+
+    cloud.timeInterval = function(_) {
+      return arguments.length ? (timeInterval = _ == null ? Infinity : _, cloud) : timeInterval;
+    };
+
+    cloud.words = function(_) {
+      return arguments.length ? (words = _, cloud) : words;
+    };
+
+    cloud.size = function(_) {
+      return arguments.length ? (size = [+_[0], +_[1]], cloud) : size;
+    };
+
+    cloud.font = function(_) {
+      return arguments.length ? (font = d3.functor(_), cloud) : font;
+    };
+
+    cloud.fontStyle = function(_) {
+      return arguments.length ? (fontStyle = d3.functor(_), cloud) : fontStyle;
+    };
+
+    cloud.fontWeight = function(_) {
+      return arguments.length ? (fontWeight = d3.functor(_), cloud) : fontWeight;
+    };
+
+    cloud.rotate = function(_) {
+      return arguments.length ? (rotate = d3.functor(_), cloud) : rotate;
+    };
+
+    cloud.text = function(_) {
+      return arguments.length ? (text = d3.functor(_), cloud) : text;
+    };
+
+    cloud.spiral = function(_) {
+      return arguments.length ? (spiral = spirals[_] || _, cloud) : spiral;
+    };
+
+    cloud.fontSize = function(_) {
+      return arguments.length ? (fontSize = d3.functor(_), cloud) : fontSize;
+    };
+
+    cloud.padding = function(_) {
+      return arguments.length ? (padding = d3.functor(_), cloud) : padding;
+    };
+
+    cloud.random = function(_) {
+      return arguments.length ? (random = _, cloud) : random;
+    };
+
+    return d3.rebind(cloud, event, "on");
+  };
+
+  function cloudText(d) {
+    return d.text;
+  }
+
+  function cloudFont() {
+    return "serif";
+  }
+
+  function cloudFontNormal() {
+    return "normal";
+  }
+
+  function cloudFontSize(d) {
+    return Math.sqrt(d.value);
+  }
+
+  function cloudRotate() {
+    return (~~(Math.random() * 6) - 3) * 30;
+  }
+
+  function cloudPadding() {
+    return 1;
+  }
+
+  // Fetches a monochrome sprite bitmap for the specified text.
+  // Load in batches for speed.
+  function cloudSprite(d, data, di) {
+    if (d.sprite) return;
+    c.clearRect(0, 0, (cw << 5) / ratio, ch / ratio);
+    var x = 0,
+        y = 0,
+        maxh = 0,
+        n = data.length;
+    --di;
+    while (++di < n) {
+      d = data[di];
+      c.save();
+      c.font = d.style + " " + d.weight + " " + ~~((d.size + 1) / ratio) + "px " + d.font;
+      var w = c.measureText(d.text + "m").width * ratio,
+          h = d.size << 1;
+      if (d.rotate) {
+        var sr = Math.sin(d.rotate * cloudRadians),
+            cr = Math.cos(d.rotate * cloudRadians),
+            wcr = w * cr,
+            wsr = w * sr,
+            hcr = h * cr,
+            hsr = h * sr;
+        w = (Math.max(Math.abs(wcr + hsr), Math.abs(wcr - hsr)) + 0x1f) >> 5 << 5;
+        h = ~~Math.max(Math.abs(wsr + hcr), Math.abs(wsr - hcr));
+      } else {
+        w = (w + 0x1f) >> 5 << 5;
+      }
+      if (h > maxh) maxh = h;
+      if (x + w >= (cw << 5)) {
+        x = 0;
+        y += maxh;
+        maxh = 0;
+      }
+      if (y + h >= ch) break;
+      c.translate((x + (w >> 1)) / ratio, (y + (h >> 1)) / ratio);
+      if (d.rotate) c.rotate(d.rotate * cloudRadians);
+      c.fillText(d.text, 0, 0);
+      if (d.padding) c.lineWidth = 2 * d.padding, c.strokeText(d.text, 0, 0);
+      c.restore();
+      d.width = w;
+      d.height = h;
+      d.xoff = x;
+      d.yoff = y;
+      d.x1 = w >> 1;
+      d.y1 = h >> 1;
+      d.x0 = -d.x1;
+      d.y0 = -d.y1;
+      d.hasText = true;
+      x += w;
+    }
+    var pixels = c.getImageData(0, 0, (cw << 5) / ratio, ch / ratio).data,
+        sprite = [];
+    while (--di >= 0) {
+      d = data[di];
+      if (!d.hasText) continue;
+      var w = d.width,
+          w32 = w >> 5,
+          h = d.y1 - d.y0;
+      // Zero the buffer
+      for (var i = 0; i < h * w32; i++) sprite[i] = 0;
+      x = d.xoff;
+      if (x == null) return;
+      y = d.yoff;
+      var seen = 0,
+          seenRow = -1;
+      for (var j = 0; j < h; j++) {
+        for (var i = 0; i < w; i++) {
+          var k = w32 * j + (i >> 5),
+              m = pixels[((y + j) * (cw << 5) + (x + i)) << 2] ? 1 << (31 - (i % 32)) : 0;
+          sprite[k] |= m;
+          seen |= m;
+        }
+        if (seen) seenRow = j;
+        else {
+          d.y0++;
+          h--;
+          j--;
+          y++;
+        }
+      }
+      d.y1 = d.y0 + seenRow;
+      d.sprite = sprite.slice(0, (d.y1 - d.y0) * w32);
+    }
+  }
+
+  // Use mask-based collision detection.
+  function cloudCollide(tag, board, sw) {
+    sw >>= 5;
+    var sprite = tag.sprite,
+        w = tag.width >> 5,
+        lx = tag.x - (w << 4),
+        sx = lx & 0x7f,
+        msx = 32 - sx,
+        h = tag.y1 - tag.y0,
+        x = (tag.y + tag.y0) * sw + (lx >> 5),
+        last;
+    for (var j = 0; j < h; j++) {
+      last = 0;
+      for (var i = 0; i <= w; i++) {
+        if (((last << msx) | (i < w ? (last = sprite[j * w + i]) >>> sx : 0))
+            & board[x + i]) return true;
+      }
+      x += sw;
+    }
+    return false;
+  }
+
+  function cloudBounds(bounds, d) {
+    var b0 = bounds[0],
+        b1 = bounds[1];
+    if (d.x + d.x0 < b0.x) b0.x = d.x + d.x0;
+    if (d.y + d.y0 < b0.y) b0.y = d.y + d.y0;
+    if (d.x + d.x1 > b1.x) b1.x = d.x + d.x1;
+    if (d.y + d.y1 > b1.y) b1.y = d.y + d.y1;
+  }
+
+  function collideRects(a, b) {
+    return a.x + a.x1 > b[0].x && a.x + a.x0 < b[1].x && a.y + a.y1 > b[0].y && a.y + a.y0 < b[1].y;
+  }
+
+  function archimedeanSpiral(size) {
+    var e = size[0] / size[1];
+    return function(t) {
+      return [e * (t *= .1) * Math.cos(t), t * Math.sin(t)];
+    };
+  }
+
+  function rectangularSpiral(size) {
+    var dy = 4,
+        dx = dy * size[0] / size[1],
+        x = 0,
+        y = 0;
+    return function(t) {
+      var sign = t < 0 ? -1 : 1;
+      // See triangular numbers: T_n = n * (n + 1) / 2.
+      switch ((Math.sqrt(1 + 4 * sign * t) - sign) & 3) {
+        case 0:  x += dx; break;
+        case 1:  y += dy; break;
+        case 2:  x -= dx; break;
+        default: y -= dy; break;
+      }
+      return [x, y];
+    };
+  }
+
+  // TODO reuse arrays?
+  function zeroArray(n) {
+    var a = [],
+        i = -1;
+    while (++i < n) a[i] = 0;
+    return a;
+  }
+
+  var cloudRadians = Math.PI / 180,
+      cw = 1 << 11 >> 5,
+      ch = 1 << 11,
+      canvas,
+      ratio = 1;
+
+  if (typeof document !== "undefined") {
+    canvas = document.createElement("canvas");
+    canvas.width = 1;
+    canvas.height = 1;
+    ratio = Math.sqrt(canvas.getContext("2d").getImageData(0, 0, 1, 1).data.length >> 2);
+    canvas.width = (cw << 5) / ratio;
+    canvas.height = ch / ratio;
+  } else {
+    // Attempt to use node-canvas.
+    canvas = new Canvas(cw << 5, ch);
+  }
+
+  var c = canvas.getContext("2d"),
+      spirals = {
+        archimedean: archimedeanSpiral,
+        rectangular: rectangularSpiral
+      };
+  c.fillStyle = c.strokeStyle = "red";
+  c.textAlign = "center";
+}
+
+})();
+
+
+  var fill = d3.scale.category20();
+  var words = [
+  {
+    "text": "wedding", 
+    "size": 119
+  }, 
+  {
+    "text": "best", 
+    "size": 60
+  }, 
+  {
+    "text": "love", 
+    "size": 58
+  }, 
+  {
+    "text": "ian", 
+    "size": 58
+  }, 
+  {
+    "text": "beautiful", 
+    "size": 54
+  }, 
+  {
+    "text": "congratulations", 
+    "size": 49
+  }, 
+  {
+    "text": "day", 
+    "size": 41
+  }, 
+  {
+    "text": "congrats", 
+    "size": 41
+  }, 
+  {
+    "text": "cake", 
+    "size": 41
+  }, 
+  {
+    "text": "video", 
+    "size": 38
+  }, 
+  {
+    "text": "make", 
+    "size": 38
+  }, 
+  {
+    "text": "tweet", 
+    "size": 36
+  }, 
+  {
+    "text": "sup", 
+    "size": 36
+  }, 
+  {
+    "text": "wedding!", 
+    "size": 36
+  }, 
+  {
+    "text": "gurl", 
+    "size": 36
+  }, 
+  {
+    "text": "here's", 
+    "size": 36
+  }, 
+  {
+    "text": "ian's", 
+    "size": 36
+  }, 
+  {
+    "text": "i'm", 
+    "size": 36
+  }, 
+  {
+    "text": "getting", 
+    "size": 36
+  }, 
+  {
+    "text": "jenn", 
+    "size": 36
+  }, 
+  {
+    "text": "made", 
+    "size": 34
+  }, 
+  {
+    "text": "married", 
+    "size": 34
+  }, 
+  {
+    "text": "yesterday", 
+    "size": 34
+  }, 
+  {
+    "text": "excited", 
+    "size": 34
+  }, 
+  {
+    "text": "happy", 
+    "size": 34
+  }, 
+  {
+    "text": "party!", 
+    "size": 32
+  }, 
+  {
+    "text": "here", 
+    "size": 32
+  }, 
+  {
+    "text": "great", 
+    "size": 32
+  }, 
+  {
+    "text": "instead", 
+    "size": 32
+  }, 
+  {
+    "text": "couldn't", 
+    "size": 32
+  }, 
+  {
+    "text": "big", 
+    "size": 32
+  }, 
+  {
+    "text": "couple", 
+    "size": 32
+  }, 
+  {
+    "text": "wish", 
+    "size": 32
+  }, 
+  {
+    "text": "time", 
+    "size": 32
+  }, 
+  {
+    "text": "dance", 
+    "size": 30
+  }, 
+  {
+    "text": "two", 
+    "size": 30
+  }, 
+  {
+    "text": "date", 
+    "size": 30
+  }, 
+  {
+    "text": "way", 
+    "size": 30
+  }, 
+  {
+    "text": "oliver", 
+    "size": 30
+  }, 
+  {
+    "text": "fun", 
+    "size": 30
+  }, 
+  {
+    "text": "ready", 
+    "size": 30
+  }, 
+  {
+    "text": "being", 
+    "size": 30
+  }, 
+  {
+    "text": "gonna", 
+    "size": 30
+  }, 
+  {
+    "text": "twitter", 
+    "size": 30
+  }, 
+  {
+    "text": "update:", 
+    "size": 28
+  }, 
+  {
+    "text": "honour", 
+    "size": 28
+  }, 
+  {
+    "text": "enjoying", 
+    "size": 28
+  }, 
+  {
+    "text": "awesome", 
+    "size": 28
+  }, 
+  {
+    "text": "ceremony", 
+    "size": 28
+  }, 
+  {
+    "text": "man", 
+    "size": 28
+  }, 
+  {
+    "text": "always", 
+    "size": 28
+  }, 
+  {
+    "text": "bride", 
+    "size": 28
+  }, 
+  {
+    "text": "ugh", 
+    "size": 28
+  }, 
+  {
+    "text": "celebrate", 
+    "size": 28
+  }, 
+  {
+    "text": "see", 
+    "size": 28
+  }, 
+  {
+    "text": "it's", 
+    "size": 28
+  }, 
+  {
+    "text": "speech", 
+    "size": 28
+  }, 
+  {
+    "text": "status", 
+    "size": 28
+  }, 
+  {
+    "text": "hey", 
+    "size": 28
+  }, 
+  {
+    "text": "you!", 
+    "size": 28
+  }, 
+  {
+    "text": "reception", 
+    "size": 28
+  }, 
+  {
+    "text": "sorry", 
+    "size": 25
+  }, 
+  {
+    "text": "today!", 
+    "size": 25
+  }, 
+  {
+    "text": "wedding!!", 
+    "size": 25
+  }, 
+  {
+    "text": "family", 
+    "size": 25
+  }, 
+  {
+    "text": "hot", 
+    "size": 25
+  }, 
+  {
+    "text": "good", 
+    "size": 25
+  }, 
+  {
+    "text": "found", 
+    "size": 25
+  }, 
+  {
+    "text": "looking", 
+    "size": 25
+  }, 
+  {
+    "text": "first", 
+    "size": 25
+  }, 
+  {
+    "text": "miss", 
+    "size": 25
+  }, 
+  {
+    "text": "guys!", 
+    "size": 25
+  }, 
+  {
+    "text": "table", 
+    "size": 25
+  }, 
+  {
+    "text": "look", 
+    "size": 25
+  }, 
+  {
+    "text": "party", 
+    "size": 25
+  }, 
+  {
+    "text": "yours", 
+    "size": 25
+  }, 
+  {
+    "text": "cuter", 
+    "size": 25
+  }, 
+  {
+    "text": "out", 
+    "size": 25
+  }, 
+  {
+    "text": "nice", 
+    "size": 25
+  }, 
+  {
+    "text": "finally!", 
+    "size": 25
+  }, 
+  {
+    "text": "friends", 
+    "size": 25
+  }, 
+  {
+    "text": "tweeted", 
+    "size": 23
+  }, 
+  {
+    "text": "jennian2015", 
+    "size": 23
+  }, 
+  {
+    "text": "aren't", 
+    "size": 23
+  }, 
+  {
+    "text": "wait", 
+    "size": 23
+  }, 
+  {
+    "text": "room", 
+    "size": 23
+  }, 
+  {
+    "text": "cam", 
+    "size": 23
+  }, 
+  {
+    "text": "didn't", 
+    "size": 23
+  }, 
+  {
+    "text": "bridesmaid", 
+    "size": 23
+  }, 
+  {
+    "text": "awkward", 
+    "size": 23
+  }, 
+  {
+    "text": "birthday", 
+    "size": 23
+  }, 
+  {
+    "text": "brother", 
+    "size": 23
+  }, 
+  {
+    "text": "celebrating", 
+    "size": 23
+  }, 
+  {
+    "text": "turn", 
+    "size": 23
+  }, 
+  {
+    "text": "you're", 
+    "size": 23
+  }, 
+  {
+    "text": "guys", 
+    "size": 23
+  }, 
+  {
+    "text": "part", 
+    "size": 23
+  }, 
+  {
+    "text": "need", 
+    "size": 23
+  }, 
+  {
+    "text": "waiting", 
+    "size": 23
+  }, 
+  {
+    "text": "going", 
+    "size": 23
+  }, 
+  {
+    "text": "shots", 
+    "size": 23
+  }, 
+  {
+    "text": "killing", 
+    "size": 23
+  }, 
+  {
+    "text": "there!", 
+    "size": 23
+  }, 
+  {
+    "text": "board", 
+    "size": 23
+  }, 
+  {
+    "text": "table!", 
+    "size": 23
+  }, 
+  {
+    "text": "people", 
+    "size": 23
+  }, 
+  {
+    "text": "ceremony!", 
+    "size": 23
+  }, 
+  {
+    "text": "next", 
+    "size": 23
+  }, 
+  {
+    "text": "much", 
+    "size": 23
+  }, 
+  {
+    "text": "more", 
+    "size": 23
+  }, 
+  {
+    "text": "let's", 
+    "size": 23
+  }, 
+  {
+    "text": "lead", 
+    "size": 23
+  }, 
+  {
+    "text": "having", 
+    "size": 23
+  }, 
+  {
+    "text": "finally", 
+    "size": 21
+  }, 
+  {
+    "text": "garden", 
+    "size": 21
+  }, 
+  {
+    "text": "song", 
+    "size": 21
+  }, 
+  {
+    "text": "wishes", 
+    "size": 21
+  }, 
+  {
+    "text": "cool", 
+    "size": 21
+  }, 
+  {
+    "text": "married!", 
+    "size": 21
+  }, 
+  {
+    "text": "here!!", 
+    "size": 21
+  }, 
+  {
+    "text": "here!", 
+    "size": 21
+  }, 
+  {
+    "text": "loving", 
+    "size": 21
+  }, 
+  {
+    "text": "ian!", 
+    "size": 21
+  }, 
+  {
+    "text": "baby", 
+    "size": 21
+  }, 
+  {
+    "text": "such", 
+    "size": 21
+  }, 
+  {
+    "text": "bloom", 
+    "size": 21
+  }, 
+  {
+    "text": "don't", 
+    "size": 21
+  }, 
+  {
+    "text": "before", 
+    "size": 21
+  }, 
+  {
+    "text": "speech!", 
+    "size": 21
+  }, 
+  {
+    "text": "better", 
+    "size": 21
+  }, 
+  {
+    "text": "main", 
+    "size": 21
+  }, 
+  {
+    "text": "dad", 
+    "size": 21
+  }, 
+  {
+    "text": "roast", 
+    "size": 21
+  }, 
+  {
+    "text": "rock", 
+    "size": 21
+  }, 
+  {
+    "text": "topper!", 
+    "size": 21
+  }, 
+  {
+    "text": "event", 
+    "size": 21
+  }, 
+  {
+    "text": "day!", 
+    "size": 21
+  }, 
+  {
+    "text": "heck", 
+    "size": 21
+  }, 
+  {
+    "text": "promotion", 
+    "size": 21
+  }, 
+  {
+    "text": "think", 
+    "size": 21
+  }, 
+  {
+    "text": "one", 
+    "size": 21
+  }, 
+  {
+    "text": "done", 
+    "size": 21
+  }, 
+  {
+    "text": "baby!", 
+    "size": 21
+  }, 
+  {
+    "text": "jen", 
+    "size": 21
+  }, 
+  {
+    "text": "took", 
+    "size": 21
+  }, 
+  {
+    "text": "july", 
+    "size": 21
+  }, 
+  {
+    "text": "flowers", 
+    "size": 21
+  }, 
+  {
+    "text": "false", 
+    "size": 21
+  }, 
+  {
+    "text": "self", 
+    "size": 21
+  }, 
+  {
+    "text": "buddy!", 
+    "size": 21
+  }, 
+  {
+    "text": "boys", 
+    "size": 21
+  }, 
+  {
+    "text": "face", 
+    "size": 21
+  }, 
+  {
+    "text": "watch", 
+    "size": 21
+  }, 
+  {
+    "text": "bad", 
+    "size": 21
+  }, 
+  {
+    "text": "couple!!", 
+    "size": 21
+  }, 
+  {
+    "text": "solo", 
+    "size": 21
+  }, 
+  {
+    "text": "missing", 
+    "size": 21
+  }, 
+  {
+    "text": "screen", 
+    "size": 21
+  }, 
+  {
+    "text": "both!!", 
+    "size": 21
+  }, 
+  {
+    "text": "come", 
+    "size": 21
+  }, 
+  {
+    "text": "congrats,", 
+    "size": 21
+  }, 
+  {
+    "text": "yay", 
+    "size": 21
+  }, 
+  {
+    "text": "rocking", 
+    "size": 21
+  }, 
+  {
+    "text": "invited", 
+    "size": 21
+  }, 
+  {
+    "text": "alarm", 
+    "size": 21
+  }, 
+  {
+    "text": "backstreet", 
+    "size": 21
+  }, 
+  {
+    "text": "hello!", 
+    "size": 21
+  }, 
+  {
+    "text": "kid", 
+    "size": 21
+  }, 
+  {
+    "text": "photo", 
+    "size": 21
+  }, 
+  {
+    "text": "thanks", 
+    "size": 21
+  }, 
+  {
+    "text": "early", 
+    "size": 21
+  }, 
+  {
+    "text": "test", 
+    "size": 21
+  }, 
+  {
+    "text": "know", 
+    "size": 21
+  }, 
+  {
+    "text": "old", 
+    "size": 21
+  }, 
+  {
+    "text": "back", 
+    "size": 21
+  }, 
+  {
+    "text": "hair", 
+    "size": 21
+  }, 
+  {
+    "text": "honoured", 
+    "size": 21
+  }, 
+  {
+    "text": "can\u2019t", 
+    "size": 21
+  }, 
+  {
+    "text": "pose", 
+    "size": 21
+  }, 
+  {
+    "text": "war", 
+    "size": 21
+  }, 
+  {
+    "text": "head", 
+    "size": 21
+  }, 
+  {
+    "text": "invite", 
+    "size": 21
+  }, 
+  {
+    "text": "form", 
+    "size": 21
+  }, 
+  {
+    "text": "i've", 
+    "size": 21
+  }, 
+  {
+    "text": "cassidy", 
+    "size": 21
+  }, 
+  {
+    "text": "life", 
+    "size": 21
+  }, 
+  {
+    "text": "jenns", 
+    "size": 21
+  }, 
+  {
+    "text": "fashioned", 
+    "size": 21
+  }, 
+  {
+    "text": "roll", 
+    "size": 21
+  }, 
+  {
+    "text": "jenn!", 
+    "size": 21
+  }, 
+  {
+    "text": "photos", 
+    "size": 21
+  }, 
+  {
+    "text": "engaged!", 
+    "size": 19
+  }, 
+  {
+    "text": "rod", 
+    "size": 19
+  }, 
+  {
+    "text": "duty,", 
+    "size": 19
+  }, 
+  {
+    "text": "disgusting", 
+    "size": 19
+  }, 
+  {
+    "text": "turn!", 
+    "size": 19
+  }, 
+  {
+    "text": "shots!", 
+    "size": 19
+  }, 
+  {
+    "text": "very", 
+    "size": 19
+  }, 
+  {
+    "text": "fav", 
+    "size": 19
+  }, 
+  {
+    "text": "travelmates", 
+    "size": 19
+  }
+]
+
+  d3.layout.cloud().size([800, 800])
+      .words(words)
+      .rotate(function() { return ~~(Math.random() * 2) * 90; })
+      .font("Impact")
+      .fontSize(function(d) { return d.size; })
+      .on("end", draw)
+      .start();
+
+  function draw(words) {
+    d3.select("body").append("svg")
+        .attr("width", 1000)
+        .attr("height", 1000)
+      .append("g")
+        .attr("transform", "translate(400,400)")
+      .selectAll("text")
+        .data(words)
+      .enter().append("text")
+        .style("font-size", function(d) { return d.size + "px"; })
+        .style("font-family", "Impact")
+        .style("fill", function(d, i) { return fill(i); })
+        .attr("text-anchor", "middle")
+        .attr("transform", function(d) {
+          return "translate(" + [d.x, d.y] + ")rotate(" + d.rotate + ")";
+        })
+        .text(function(d) { return d.text; });
+  }
+</script>
+</body>
+</html>
+
